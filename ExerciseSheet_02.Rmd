@@ -1,0 +1,306 @@
+---
+title: "Exercise Sheet 2"
+fontsize: 11pt
+header-includes: \usepackage[german]{babel}
+output:
+  html_document: default
+  pdf_document:
+    highlight: tango
+fig_caption: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, # -> Should code chunks be displayed in the rendered document?
+                      eval = TRUE, # -> Should R Code Chunks be executed?
+                      warning = FALSE, # -> Warnings should only be set to FALSE at the end of rendering.
+                      message = FALSE) # -> Notes should only be set to FALSE at the end of rendering.
+```
+
+This exercise sheet is an [R Markdown](https://rmarkdown.rstudio.com/) file. To generate an HTML file from it, use the __Knit__ button in RStudio.
+
+The _European Soccer Database_ contains data on more than 25.000 national football matches from the best European leagues. The aim of this exercise is to present interesting relationships in R using exploratory data analysis and visualization.
+
+First you need to access some tables in the database. To do so, [download the database](https://1drv.ms/u/s!AlrZt1pKHg25gch_i-b1mAbOtWU44Q?e=AMhg1B) and place it in the same folder as this .Rmd file. You can then use the `RSQLite::dbConnect()` function to connect to the database. To access a particular database table and convert it to a `data.frame`, you can use the `tbl_df(dbGetQuery(connection, 'SELECT * FROM table_xyz'))` command as displayed below.
+
+
+
+```{r}
+# Load libraries (they need to be installed on the first run via install.packages)
+# You do not need to use these libraries, though
+library(RSQLite)
+library(stringr)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(forcats)
+library(lubridate)
+
+# connect to database
+con <- dbConnect(SQLite(), dbname = "EuropeanSoccer.sqlite")
+# table queries
+match <- tibble::as_tibble(dbGetQuery(con, "SELECT * FROM Match"))
+league <- tibble::as_tibble(dbGetQuery(con,"SELECT * FROM League"))
+
+```
+
+_Example code for a visualization: Below, you can find a code chunk that contains code to create a basic scatterplot._
+```{r}
+# Example visualization...
+match %>%
+  ggplot(aes(x = home_team_goal, y = away_team_goal)) +
+  geom_point(alpha = 1/50, size = 10)
+```
+
+
+1. The first leagues of Spain, England, Germany and Italy are considered the four most attractive football leagues in Europe. In which of the four leagues were the most or the fewest goals scored per game on average? 
+
+```{r}
+# Create total goals column
+match$total_goals <- match$home_team_goal + match$away_team_goal
+
+# Merge match and league tables
+merged_data <- match %>%
+  left_join(league, by = c("league_id" = "id"))
+
+# Filter top four leagues
+top_leagues <- merged_data %>%
+  filter(name %in% c(
+    "Spain LIGA BBVA",
+    "England Premier League",
+    "Germany 1. Bundesliga",
+    "Italy Serie A"
+  ))
+
+# Calculate average goals per game
+avg_goals <- top_leagues %>%
+  group_by(name) %>%
+  summarise(avg_goals_per_game = mean(total_goals, na.rm = TRUE))
+
+# Print results
+avg_goals
+
+# Bar chart
+ggplot(avg_goals,
+       aes(x = reorder(name, avg_goals_per_game),
+           y = avg_goals_per_game,
+           fill = name)) +
+
+  geom_bar(stat = "identity") +
+
+  labs(
+    title = "Average Goals per Game in Top European Leagues",
+    x = "League",
+    y = "Average Goals per Game"
+  ) +
+
+  theme_minimal() +
+
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 14)
+  ) 
+
+```
+The bar chart compares the average number of goals scored per game across the four major European football leagues. Germany’s Bundesliga had the highest average goals scored per game, while Italy’s Serie A had the lowest average. This indicates that Bundesliga matches were generally more attack-oriented and higher-scoring.
+```
+
+2. In this task, we refer again to the four most attractive European leagues from Task 1. Compare the average and the standard deviation of goals scored per match between the four most attractive European leagues on one side and the remaining leagues on the other side.
+
+```{r}
+# Create league groups
+merged_data <- merged_data %>%
+  mutate(
+    league_group = ifelse(
+      name %in% c(
+        "Spain LIGA BBVA",
+        "England Premier League",
+        "Germany 1. Bundesliga",
+        "Italy Serie A"
+      ),
+      "Top 4 Leagues",
+      "Other Leagues"
+    )
+  )
+
+# Calculate average and standard deviation
+league_stats <- merged_data %>%
+  group_by(league_group) %>%
+  summarise(
+    average_goals = mean(total_goals, na.rm = TRUE),
+    standard_deviation = sd(total_goals, na.rm = TRUE)
+  )
+
+# Show table
+print(league_stats)
+
+# Convert to long format for plotting
+league_stats_long <- league_stats %>%
+  pivot_longer(
+    cols = c(average_goals, standard_deviation),
+    names_to = "metric",
+    values_to = "value"
+  )
+
+# Create plot
+p <- ggplot(league_stats_long,
+            aes(x = league_group,
+                y = value,
+                fill = metric)) +
+
+  geom_bar(stat = "identity",
+           position = "dodge") +
+  geom_text(aes(label = round(value, 2)),
+          position = position_dodge(width = 0.9),
+          vjust = -0.3)   +
+
+  labs(
+    title = "Comparison of Goal Statistics",
+    x = "League Group",
+    y = "Value"
+  ) +
+
+  theme_minimal()
+
+print(p)
+
+
+```
+
+The comparison shows differences between the four major European leagues and the remaining leagues in terms of average goals and variability. The standard deviation measures how spread out the goals per match are. Higher standard deviation indicates greater unpredictability in match outcomes.
+
+3. Is there really a home advantage? Use a box plot to show the number of goals scored by home and away teams.
+
+```{r}
+# Create boxplot for home and away goals
+
+boxplot_data <- data.frame(
+  goals = c(match$home_team_goal, match$away_team_goal),
+  team_type = c(
+    rep("Home Team", length(match$home_team_goal)),
+    rep("Away Team", length(match$away_team_goal))
+  )
+)
+
+# Plot
+p <- ggplot(boxplot_data,
+            aes(x = team_type,
+                y = goals,
+                fill = team_type)) +
+
+  geom_boxplot() +
+
+  labs(
+    title = "Home vs Away Goals Distribution",
+    x = "Team Type",
+    y = "Goals Scored"
+  ) +
+
+  theme_minimal() +
+
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 14)
+  )
+
+# Show plot
+print(p)
+```
+Yes, Home teams have a slightly higher median number of goals, which suggests the presence of a home advantage.The boxplot compares the distribution of goals scored by home and away teams.  The visualization also highlights the spread and outliers in goal scoring.
+
+
+4. _"All soccer players are fair-weather players!"_ Check the assertion with a line chart: Do on average more goals fall per game in the summer months than in the rest of the year?
+
+
+```{r}
+# Convert date column to date format
+match$date <- as.Date(match$date)
+
+# Extract month
+match$month <- month(match$date, label = TRUE)
+
+# Create total goals column
+match$total_goals <- match$home_team_goal + match$away_team_goal
+
+# Calculate average goals per month
+monthly_goals <- match %>%
+  group_by(month) %>%
+  summarise(
+    average_goals = mean(total_goals, na.rm = TRUE)
+  )
+
+# Create line chart
+p <- ggplot(monthly_goals,
+            aes(x = month,
+                y = average_goals,
+                group = 1)) +
+
+  geom_line(color = "blue", linewidth = 1.2) +
+
+  geom_point(size = 3, color = "red") +
+
+  geom_text(aes(label = round(average_goals, 2)),
+            vjust = -0.5,
+            size = 3) +
+
+  labs(
+    title = "Average Goals per Match by Month",
+    x = "Month",
+    y = "Average Goals"
+  ) +
+
+  theme_minimal()
+
+# Show plot
+print(p)
+```
+The line chart shows the variation in average goals scored per match across different months of the year. Some summer months show slightly higher average goals, which may support the idea that weather conditions can influence gameplay and scoring patterns.
+
+5. Use an estimated density function curve AND a QQ-Plot to check whether the `home_team_possession` variable is (approximately) normally distributed.
+
+```{r}
+# Create possession variable and remove missing values
+possession <- na.omit(match$home_team_possession)
+
+# Density Plot
+p1 <- ggplot(data.frame(possession),
+             aes(x = possession)) +
+
+  geom_density(fill = "lightblue", alpha = 0.5) +
+
+  labs(
+    title = "Density Plot of Home Team Possession",
+    x = "Home Team Possession",
+    y = "Density"
+  ) +
+
+  theme_minimal()
+
+# Show density plot
+print(p1)
+
+# QQ Plot
+p2 <- ggplot(data.frame(possession),
+             aes(sample = possession)) +
+
+  stat_qq() +
+
+  stat_qq_line(color = "red") +
+
+  labs(
+    title = "QQ Plot of Home Team Possession"
+  ) +
+
+  theme_minimal()
+
+# Show QQ plot
+print(p2)
+```
+The density plot and QQ plot are used to visually assess whether the home_team_possession variable follows an approximately normal distribution. The density curve shows the shape of the distribution, while the QQ plot compares the observed data with a theoretical normal distribution. Small deviations from the straight line indicate that the distribution is only approximately normal.
+
+
+
+------
+Dataset:
+
+- https://1drv.ms/u/s!AlrZt1pKHg25gch_i-b1mAbOtWU44Q?e=AMhg1B  
+(For database schema and explanation of variables, see: https://www.kaggle.com/hugomathien/soccer)
